@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "bm3_importer"
+version = "1.0.0"
+name = "BM3 Importer"
+tagline = "Import by.me BM3 3D model files with PBR materials"
+maintainer = "Victor Romero <vromero>"
+type = "add-on"
+
+tags = ["Import-Export"]
+blender_version_min = "4.2.0"
+
+license = ["SPDX:MIT"]
+copyright = ["2026 Victor Romero"]
+
+[permissions]
+files = "Read BM3/BM3MAT files and write temporary GLB files for import"
