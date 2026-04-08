@@ -125,25 +125,33 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
 
         gltf["materials"].append(gltf_mat)
 
-    # --- Vertex layout ---
-    vertex_layout = manifest["vertexLayouts"][0][0]
-    bytes_per_vertex = sum(
-        (4 if a["format"] == "FLOAT" else 2) * a["dimension"]
-        for a in vertex_layout
-    )
-
     # --- Geometries ---
     geom_primitives = []
     for geom in manifest.get("geometries", []):
+        layout_idx = geom.get("vertexLayout", 0)
+        vertex_layout = manifest["vertexLayouts"][layout_idx][0]
+        bytes_per_vertex = sum(
+            (4 if a["format"] == "FLOAT" else 2) * a["dimension"]
+            for a in vertex_layout
+        )
+
         vbuf_info = manifest["buffers"][geom["vertexBuffers"][0]]
         vertex_data = binary[vbuf_info["byteOffset"]:vbuf_info["byteOffset"] + vbuf_info["byteLength"]]
         vertex_count = vbuf_info["byteLength"] // bytes_per_vertex
 
         ibuf_info = manifest["buffers"][geom["indexBuffer"]]
-        index_data = binary[ibuf_info["byteOffset"]:ibuf_info["byteOffset"] + ibuf_info["byteLength"]]
         index_fmt = ibuf_info.get("format", "UNSIGNED_SHORT")
-        index_size = 4 if index_fmt == "UNSIGNED_INT" else 2
+        index_size = {"UNSIGNED_INT": 4, "UNSIGNED_SHORT": 2, "UNSIGNED_BYTE": 1}[index_fmt]
         index_count = ibuf_info["byteLength"] // index_size
+
+        # Promote UNSIGNED_BYTE indices to UNSIGNED_SHORT (glTF doesn't support byte indices)
+        if index_fmt == "UNSIGNED_BYTE":
+            raw = binary[ibuf_info["byteOffset"]:ibuf_info["byteOffset"] + ibuf_info["byteLength"]]
+            index_data = struct.pack(f"<{index_count}H", *raw)
+            index_fmt = "UNSIGNED_SHORT"
+            index_size = 2
+        else:
+            index_data = binary[ibuf_info["byteOffset"]:ibuf_info["byteOffset"] + ibuf_info["byteLength"]]
 
         v_offset, v_length = add_chunk(vertex_data)
         i_offset, i_length = add_chunk(index_data)
@@ -367,7 +375,7 @@ class IMPORT_OT_bm3(bpy.types.Operator, ImportHelper):
                     f.write(glb_data)
 
                 before = set(bpy.data.objects)
-                bpy.ops.import_scene.gltf(filepath=tmp_path)
+                result = bpy.ops.import_scene.gltf(filepath=tmp_path)
                 new_objects = set(bpy.data.objects) - before
 
                 for obj in new_objects:
