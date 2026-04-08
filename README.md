@@ -17,11 +17,10 @@ BM3 is the proprietary format used by the [by.me](https://by.me) 3D configurator
 
 Requires **Blender 4.2+** (uses the modern extension format).
 
-1. Download or clone this repository
-2. Build the extension ZIP: `cd bm3_importer && zip -r ../bm3_importer.zip blender_manifest.toml __init__.py`
-3. In Blender, go to **Edit > Preferences > Get Extensions**
-4. Open the drop-down menu (top-right) and choose **Install from Disk...**
-5. Select the `bm3_importer.zip` file
+1. Download `bm3_importer.zip` from the [latest release](https://github.com/vromero/blender-bm3-importer/releases/latest)
+2. In Blender, go to **Edit > Preferences > Get Extensions**
+3. Open the drop-down menu (top-right) and choose **Install from Disk...**
+4. Select the downloaded `bm3_importer.zip` file
 
 ## Usage
 

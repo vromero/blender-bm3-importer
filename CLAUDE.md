@@ -10,9 +10,11 @@ Blender add-on that imports by.me BM3 3D model files (`.bm3`) with optional BM3M
 
 This is a Blender 4.2+ extension using the modern `blender_manifest.toml` format (not legacy `bl_info`). No external dependencies — only Python stdlib + `bpy`.
 
-**Build extension ZIP:** `cd bm3_importer && zip -r ../bm3_importer.zip blender_manifest.toml __init__.py`
+**Build extension ZIP locally:** `cd bm3_importer && zip -r ../bm3_importer.zip blender_manifest.toml __init__.py`
 
 **Install for testing:** In Blender, Edit > Preferences > Get Extensions > Install from Disk > select `bm3_importer.zip`.
+
+Releases are automated via GitHub Actions — pushing a `v*` tag builds the ZIP and creates a release.
 
 There is no build step, linter, or test suite configured.
 
