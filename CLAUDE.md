@@ -14,9 +14,9 @@ This is a Blender 4.2+ extension using the modern `blender_manifest.toml` format
 
 **Install for testing:** In Blender, Edit > Preferences > Get Extensions > Install from Disk > select `bm3_importer.zip`.
 
-Releases are automated via GitHub Actions — pushing a `v*` tag builds the ZIP and creates a release.
+Releases are automated via GitHub Actions — pushing a `v*` tag builds the ZIP (with version injected from tag) and creates a release.
 
-There is no build step, linter, or test suite configured.
+**Run tests:** `pytest tests/ -v` (no bpy needed — converter functions are importable without Blender). CI runs tests on every push/PR.
 
 ## Architecture
 
@@ -30,7 +30,7 @@ The entire add-on lives in `bm3_importer/__init__.py` (~410 lines). Key flow:
 
 - BM3 files are ZIPs containing `manifest.json` + `binary.bin`
 - Materials named `__GLTFLoader._default` in the geometry BM3 get replaced by the first material from the BM3MAT file
-- Vertex data is interleaved: POSITION(float3) + NORMAL(float3) + TEXCOORD_0(float2) = 32 bytes/vertex
+- Per-geometry vertex layouts; common layout is POSITION(float3) + NORMAL(float3) + TEXCOORD_0(float2) = 32 bytes/vertex
 - BM3 uses Z-up millimeters; a wrapper root node with scale `[0.001, 0.001, 0.001]` converts to glTF meters
 - DSPBR material properties (albedo, metallic, roughness, normal) map to glTF PBR
 

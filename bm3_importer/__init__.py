@@ -32,7 +32,7 @@ def _extract_bm3(data):
 
 def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
     gltf = {
-        "asset": {"version": "2.0", "generator": "Sklum Blender Importer"},
+        "asset": {"version": "2.0", "generator": "BM3 Importer for Blender"},
         "scene": 0,
         "scenes": [{"nodes": []}],
         "nodes": [],
@@ -108,10 +108,7 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
             if tex_id is not None:
                 idx = add_texture_from_source(tex_id, tex_src, tex_bin)
                 if idx is not None:
-                    if gltf_key == "baseColorTexture":
-                        gltf_mat["pbrMetallicRoughness"][gltf_key] = {"index": idx}
-                    else:
-                        gltf_mat["pbrMetallicRoughness"][gltf_key] = {"index": idx}
+                    gltf_mat["pbrMetallicRoughness"][gltf_key] = {"index": idx}
 
         # Normal map
         tex_id = use_mat.get("normal", {}).get("texture")
@@ -137,6 +134,7 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
     }
 
     geom_primitives = []  # list of lists: [(prim_attrs, iacc_idx, gltf_mode), ...]
+    geom_double_sided = []  # per-geometry doubleSided flag
     for geom_idx, geom in enumerate(manifest.get("geometries", [])):
         layout_idx = geom.get("vertexLayout", 0)
         # vertexLayouts[idx] is an array of arrays: one attribute list per
@@ -261,6 +259,7 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
             dg_primitives.append((prim_attrs, iacc_idx, gltf_mode))
 
         geom_primitives.append(dg_primitives)
+        geom_double_sided.append(geom.get("doubleSided", False))
 
     # --- Nodes ---
     for i, bm3_node in enumerate(manifest.get("nodes", [])):
@@ -274,6 +273,10 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
             mesh_idx = len(gltf["meshes"])
             primitives = []
             for geom_idx in bm3_node.get("geometries", []):
+                if geom_double_sided[geom_idx]:
+                    mat_idx = bm3_node.get("material")
+                    if mat_idx is not None and mat_idx < len(gltf["materials"]):
+                        gltf["materials"][mat_idx]["doubleSided"] = True
                 for attrs, iacc, gltf_mode in geom_primitives[geom_idx]:
                     prim = {"attributes": attrs, "indices": iacc, "mode": gltf_mode}
                     mat_idx = bm3_node.get("material")
