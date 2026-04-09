@@ -1,12 +1,17 @@
-import bpy
 import json
 import struct
 import zipfile
 import tempfile
 import os
 import io
-from bpy.props import StringProperty, CollectionProperty
-from bpy_extras.io_utils import ImportHelper
+
+try:
+    import bpy
+    from bpy.props import StringProperty, CollectionProperty
+    from bpy_extras.io_utils import ImportHelper
+    _HAS_BPY = True
+except ImportError:
+    _HAS_BPY = False
 
 
 # ---------------------------------------------------------------------------
@@ -126,14 +131,27 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
         gltf["materials"].append(gltf_mat)
 
     # --- Geometries ---
-    geom_primitives = []
-    for geom in manifest.get("geometries", []):
+    _MODE_MAP = {
+        "POINTS": 0, "LINES": 1, "LINE_LOOP": 2, "LINE_STRIP": 3,
+        "TRIANGLES": 4, "TRIANGLE_STRIP": 5, "TRIANGLE_FAN": 6,
+    }
+
+    geom_primitives = []  # list of lists: [(prim_attrs, iacc_idx, gltf_mode), ...]
+    for geom_idx, geom in enumerate(manifest.get("geometries", [])):
         layout_idx = geom.get("vertexLayout", 0)
+        # vertexLayouts[idx] is an array of arrays: one attribute list per
+        # vertex buffer.  Only single-buffer geometries are supported.
         vertex_layout = manifest["vertexLayouts"][layout_idx][0]
         bytes_per_vertex = sum(
             (4 if a["format"] == "FLOAT" else 2) * a["dimension"]
             for a in vertex_layout
         )
+
+        if len(geom["vertexBuffers"]) > 1:
+            raise ValueError(
+                f"Geometry {geom_idx} has {len(geom['vertexBuffers'])} vertex "
+                f"buffers; only 1 is currently supported"
+            )
 
         vbuf_info = manifest["buffers"][geom["vertexBuffers"][0]]
         vertex_data = binary[vbuf_info["byteOffset"]:vbuf_info["byteOffset"] + vbuf_info["byteLength"]]
@@ -142,12 +160,11 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
         ibuf_info = manifest["buffers"][geom["indexBuffer"]]
         index_fmt = ibuf_info.get("format", "UNSIGNED_SHORT")
         index_size = {"UNSIGNED_INT": 4, "UNSIGNED_SHORT": 2, "UNSIGNED_BYTE": 1}[index_fmt]
-        index_count = ibuf_info["byteLength"] // index_size
 
         # Promote UNSIGNED_BYTE indices to UNSIGNED_SHORT (glTF doesn't support byte indices)
         if index_fmt == "UNSIGNED_BYTE":
             raw = binary[ibuf_info["byteOffset"]:ibuf_info["byteOffset"] + ibuf_info["byteLength"]]
-            index_data = struct.pack(f"<{index_count}H", *raw)
+            index_data = struct.pack(f"<{len(raw)}H", *raw)
             index_fmt = "UNSIGNED_SHORT"
             index_size = 2
         else:
@@ -156,6 +173,7 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
         v_offset, v_length = add_chunk(vertex_data)
         i_offset, i_length = add_chunk(index_data)
 
+        # Build vertex attribute accessors (shared across all drawing groups)
         prim_attrs = {}
         attr_byte_offset = 0
         for attr in vertex_layout:
@@ -204,17 +222,45 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
             prim_attrs[attr_map.get(attr["attribute"], attr["attribute"])] = acc_idx
             attr_byte_offset += attr_byte_len
 
-        ibv_idx = len(gltf["bufferViews"])
-        gltf["bufferViews"].append({"buffer": 0, "byteOffset": i_offset, "byteLength": i_length})
+        # Build one primitive per drawing group
+        idx_comp_type = 5125 if index_fmt == "UNSIGNED_INT" else 5123
+        fmt_char = "I" if index_fmt == "UNSIGNED_INT" else "H"
+        dg_primitives = []
 
-        iacc_idx = len(gltf["accessors"])
-        gltf["accessors"].append({
-            "bufferView": ibv_idx, "byteOffset": 0,
-            "componentType": 5125 if index_fmt == "UNSIGNED_INT" else 5123,
-            "count": index_count, "type": "SCALAR",
-        })
+        for dg in geom.get("drawingGroups", [{"start": 0, "count": len(index_data) // index_size, "mode": "TRIANGLES"}]):
+            dg_start = dg["start"]
+            dg_count = dg["count"]
+            dg_byte_offset = dg_start * index_size
+            dg_byte_length = dg_count * index_size
 
-        geom_primitives.append((prim_attrs, iacc_idx))
+            # Validate index bounds
+            dg_slice = index_data[dg_byte_offset:dg_byte_offset + dg_byte_length]
+            indices = struct.unpack(f"<{dg_count}{fmt_char}", dg_slice)
+            max_idx = max(indices) if indices else 0
+            if max_idx >= vertex_count:
+                raise ValueError(
+                    f"Geometry {geom_idx}: index {max_idx} out of bounds "
+                    f"(vertex count {vertex_count})"
+                )
+
+            ibv_idx = len(gltf["bufferViews"])
+            gltf["bufferViews"].append({
+                "buffer": 0,
+                "byteOffset": i_offset + dg_byte_offset,
+                "byteLength": dg_byte_length,
+            })
+
+            iacc_idx = len(gltf["accessors"])
+            gltf["accessors"].append({
+                "bufferView": ibv_idx, "byteOffset": 0,
+                "componentType": idx_comp_type,
+                "count": dg_count, "type": "SCALAR",
+            })
+
+            gltf_mode = _MODE_MAP.get(dg.get("mode", "TRIANGLES"), 4)
+            dg_primitives.append((prim_attrs, iacc_idx, gltf_mode))
+
+        geom_primitives.append(dg_primitives)
 
     # --- Nodes ---
     for i, bm3_node in enumerate(manifest.get("nodes", [])):
@@ -228,12 +274,12 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
             mesh_idx = len(gltf["meshes"])
             primitives = []
             for geom_idx in bm3_node.get("geometries", []):
-                attrs, iacc = geom_primitives[geom_idx]
-                prim = {"attributes": attrs, "indices": iacc, "mode": 4}
-                mat_idx = bm3_node.get("material")
-                if mat_idx is not None and mat_idx < len(gltf["materials"]):
-                    prim["material"] = mat_idx
-                primitives.append(prim)
+                for attrs, iacc, gltf_mode in geom_primitives[geom_idx]:
+                    prim = {"attributes": attrs, "indices": iacc, "mode": gltf_mode}
+                    mat_idx = bm3_node.get("material")
+                    if mat_idx is not None and mat_idx < len(gltf["materials"]):
+                        prim["material"] = mat_idx
+                    primitives.append(prim)
             gltf["meshes"].append({
                 "name": bm3_node.get("publication", f"mesh_{mesh_idx}"),
                 "primitives": primitives,
@@ -298,120 +344,118 @@ def _find_bm3mat_files(directory):
     return result
 
 
-class IMPORT_OT_bm3(bpy.types.Operator, ImportHelper):
-    """Import by.me BM3 geometry files, with optional BM3MAT material"""
-    bl_idname = "import_scene.bm3"
-    bl_label = "Import BM3"
-    bl_options = {"REGISTER", "UNDO", "PRESET"}
+if _HAS_BPY:
 
-    filter_glob: StringProperty(default="*.BM3;*.bm3", options={"HIDDEN"})  # type: ignore
-    files: CollectionProperty(type=bpy.types.OperatorFileListElement)  # type: ignore
-    directory: StringProperty(subtype="DIR_PATH")  # type: ignore
+    class IMPORT_OT_bm3(bpy.types.Operator, ImportHelper):
+        """Import by.me BM3 geometry files, with optional BM3MAT material"""
+        bl_idname = "import_scene.bm3"
+        bl_label = "Import BM3"
+        bl_options = {"REGISTER", "UNDO", "PRESET"}
 
-    auto_material: bpy.props.BoolProperty(
-        name="Auto-detect material",
-        description=(
-            "Automatically apply any .BM3MAT file found next to "
-            "the selected .BM3 files"
-        ),
-        default=True,
-    )  # type: ignore
+        filter_glob: StringProperty(default="*.BM3;*.bm3", options={"HIDDEN"})  # type: ignore
+        files: CollectionProperty(type=bpy.types.OperatorFileListElement)  # type: ignore
+        directory: StringProperty(subtype="DIR_PATH")  # type: ignore
 
-    def draw(self, context):
-        layout = self.layout
-        layout.prop(self, "auto_material")
+        auto_material: bpy.props.BoolProperty(
+            name="Auto-detect material",
+            description=(
+                "Automatically apply any .BM3MAT file found next to "
+                "the selected .BM3 files"
+            ),
+            default=True,
+        )  # type: ignore
 
-    def execute(self, context):
-        # Determine which files to import
-        if self.files:
-            paths = [os.path.join(self.directory, f.name)
-                     for f in self.files if f.name]
-        else:
-            paths = [self.filepath]
+        def draw(self, context):
+            layout = self.layout
+            layout.prop(self, "auto_material")
 
-        if not paths:
-            self.report({"ERROR"}, "No files selected")
-            return {"CANCELLED"}
+        def execute(self, context):
+            # Determine which files to import
+            if self.files:
+                paths = [os.path.join(self.directory, f.name)
+                         for f in self.files if f.name]
+            else:
+                paths = [self.filepath]
 
-        # Auto-detect material file in the same directory
-        mat_manifest = None
-        mat_binary = None
-        if self.auto_material:
-            src_dir = os.path.dirname(paths[0])
-            mat_files = _find_bm3mat_files(src_dir)
-            if mat_files:
-                mat_path = mat_files[0]
+            if not paths:
+                self.report({"ERROR"}, "No files selected")
+                return {"CANCELLED"}
+
+            # Auto-detect material file in the same directory
+            mat_manifest = None
+            mat_binary = None
+            if self.auto_material:
+                src_dir = os.path.dirname(paths[0])
+                mat_files = _find_bm3mat_files(src_dir)
+                if mat_files:
+                    mat_path = mat_files[0]
+                    try:
+                        with open(mat_path, "rb") as f:
+                            mat_manifest, mat_binary = _extract_bm3(f.read())
+                        self.report({"INFO"},
+                                    f"Auto-loaded material: {os.path.basename(mat_path)}")
+                    except Exception as e:
+                        self.report({"WARNING"}, f"Could not load material: {e}")
+
+            imported = 0
+            for path in paths:
+                if not os.path.isfile(path):
+                    continue
+                name = os.path.splitext(os.path.basename(path))[0]
+                self.report({"INFO"}, f"Converting: {name}")
+
                 try:
-                    with open(mat_path, "rb") as f:
-                        mat_manifest, mat_binary = _extract_bm3(f.read())
-                    self.report({"INFO"},
-                                f"Auto-loaded material: {os.path.basename(mat_path)}")
+                    with open(path, "rb") as f:
+                        manifest, binary = _extract_bm3(f.read())
                 except Exception as e:
-                    self.report({"WARNING"}, f"Could not load material: {e}")
+                    self.report({"WARNING"}, f"Could not read {name}: {e}")
+                    continue
 
-        imported = 0
-        for path in paths:
-            if not os.path.isfile(path):
-                continue
-            name = os.path.splitext(os.path.basename(path))[0]
-            self.report({"INFO"}, f"Converting: {name}")
-
-            try:
-                with open(path, "rb") as f:
-                    manifest, binary = _extract_bm3(f.read())
-            except Exception as e:
-                self.report({"WARNING"}, f"Could not read {name}: {e}")
-                continue
-
-            try:
-                glb_data = _bm3_to_glb(manifest, binary, mat_manifest, mat_binary)
-            except Exception as e:
-                self.report({"WARNING"}, f"Could not convert {name}: {e}")
-                continue
-
-            tmp_path = os.path.join(tempfile.gettempdir(), f"_bm3_{name}.glb")
-            try:
-                with open(tmp_path, "wb") as f:
-                    f.write(glb_data)
-
-                before = set(bpy.data.objects)
-                result = bpy.ops.import_scene.gltf(filepath=tmp_path)
-                new_objects = set(bpy.data.objects) - before
-
-                for obj in new_objects:
-                    if obj.parent is None:
-                        obj.name = name
-
-                imported += 1
-            except Exception as e:
-                self.report({"WARNING"}, f"Could not import {name}: {e}")
-            finally:
                 try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+                    glb_data = _bm3_to_glb(manifest, binary, mat_manifest, mat_binary)
+                except Exception as e:
+                    self.report({"WARNING"}, f"Could not convert {name}: {e}")
+                    continue
 
-        self.report({"INFO"}, f"Imported {imported}/{len(paths)} BM3 file(s)")
-        return {"FINISHED"} if imported > 0 else {"CANCELLED"}
+                tmp_path = os.path.join(tempfile.gettempdir(), f"_bm3_{name}.glb")
+                try:
+                    with open(tmp_path, "wb") as f:
+                        f.write(glb_data)
 
+                    before = set(bpy.data.objects)
+                    result = bpy.ops.import_scene.gltf(filepath=tmp_path)
+                    new_objects = set(bpy.data.objects) - before
 
-# ---------------------------------------------------------------------------
-# Registration
-# ---------------------------------------------------------------------------
+                    for obj in new_objects:
+                        if obj.parent is None:
+                            obj.name = name
 
-def menu_func_import(self, context):
-    self.layout.operator(IMPORT_OT_bm3.bl_idname, text="ByMe BM3 (.bm3)")
+                    imported += 1
+                except Exception as e:
+                    self.report({"WARNING"}, f"Could not import {name}: {e}")
+                finally:
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
 
+            self.report({"INFO"}, f"Imported {imported}/{len(paths)} BM3 file(s)")
+            return {"FINISHED"} if imported > 0 else {"CANCELLED"}
 
-def register():
-    bpy.utils.register_class(IMPORT_OT_bm3)
-    bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
+    # -------------------------------------------------------------------
+    # Registration
+    # -------------------------------------------------------------------
 
+    def menu_func_import(self, context):
+        self.layout.operator(IMPORT_OT_bm3.bl_idname, text="ByMe BM3 (.bm3)")
 
-def unregister():
-    bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
-    bpy.utils.unregister_class(IMPORT_OT_bm3)
+    def register():
+        bpy.utils.register_class(IMPORT_OT_bm3)
+        bpy.types.TOPBAR_MT_file_import.append(menu_func_import)
 
+    def unregister():
+        bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
+        bpy.utils.unregister_class(IMPORT_OT_bm3)
 
-if __name__ == "__main__":
-    register()
+    if __name__ == "__main__":
+        register()

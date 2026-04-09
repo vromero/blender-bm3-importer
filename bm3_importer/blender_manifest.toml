@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "bm3_importer"
-version = "1.0.0"
+version = "0.0.0"
 name = "BM3 Importer"
 tagline = "Import by.me BM3 3D model files with PBR materials"
 maintainer = "Victor Romero <vromero>"

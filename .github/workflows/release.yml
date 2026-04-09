@@ -14,6 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Inject version from tag into manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s/^version = .*/version = \"${VERSION}\"/" bm3_importer/blender_manifest.toml
+
       - name: Build extension ZIP
         run: cd bm3_importer && zip -r ../bm3_importer.zip blender_manifest.toml __init__.py
 
