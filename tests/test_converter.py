@@ -135,3 +135,29 @@ def test_bm3mat_override(default_material_bm3, bm3mat_data):
     assert pbr["baseColorFactor"][1] == pytest.approx(0.9, abs=0.01)
     assert pbr["metallicFactor"] == pytest.approx(0.5)
     assert pbr["roughnessFactor"] == pytest.approx(0.3)
+
+
+# ---------------------------------------------------------------------------
+# doubleSided geometry flag
+# ---------------------------------------------------------------------------
+
+def test_double_sided(triangle_bm3):
+    data, _, _ = triangle_bm3
+    manifest, binary = _extract_bm3(data)
+
+    # Enable doubleSided on the geometry
+    manifest["geometries"][0]["doubleSided"] = True
+
+    glb = _bm3_to_glb(manifest, binary)
+    gltf, _ = parse_glb(glb)
+
+    assert gltf["materials"][0]["doubleSided"] is True
+
+
+def test_single_sided_by_default(triangle_bm3):
+    data, _, _ = triangle_bm3
+    manifest, binary = _extract_bm3(data)
+    glb = _bm3_to_glb(manifest, binary)
+    gltf, _ = parse_glb(glb)
+
+    assert "doubleSided" not in gltf["materials"][0]

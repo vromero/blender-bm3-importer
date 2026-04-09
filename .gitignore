@@ -4,4 +4,5 @@ __pycache__/
 .DS_Store
 *.blend1
 .claude/
+.pytest_cache/
 *.zip
