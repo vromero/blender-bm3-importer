@@ -30,7 +30,10 @@ def _extract_bm3(data):
 # BM3 -> GLB converter (pure Python, no external deps)
 # ---------------------------------------------------------------------------
 
-def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
+def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None, log=None):
+    if log is None:
+        log = []
+
     gltf = {
         "asset": {"version": "2.0", "generator": "BM3 Importer for Blender"},
         "scene": 0,
@@ -58,15 +61,22 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
         current_offset[0] += len(aligned)
         return offset, len(buf)
 
-    def add_texture_from_source(tex_idx, src_manifest, src_binary):
+    texture_count = [0]
+
+    def add_texture_from_source(tex_idx, src_manifest, src_binary, label="texture"):
         if tex_idx is None:
             return None
         textures = src_manifest.get("textures")
         images = src_manifest.get("images")
-        if not textures or not images or tex_idx >= len(textures):
+        if not textures or not images:
+            log.append(("WARNING", f"{label}: source has no textures or images"))
+            return None
+        if tex_idx >= len(textures):
+            log.append(("WARNING", f"{label}: texture index {tex_idx} out of range (source has {len(textures)})"))
             return None
         img_ref = textures[tex_idx].get("image")
         if img_ref is None or img_ref >= len(images):
+            log.append(("WARNING", f"{label}: image reference missing or out of range"))
             return None
         img_info = images[img_ref]
         img_data = src_binary[img_info["byteOffset"]:img_info["byteOffset"] + img_info["byteLength"]]
@@ -81,20 +91,37 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
 
         tex_gltf_idx = len(gltf["textures"])
         gltf["textures"].append({"source": img_idx, "sampler": 0})
+        texture_count[0] += 1
         return tex_gltf_idx
 
     # --- Materials ---
+    overridden_count = 0
+    mat_count = len(manifest.get("materials", []))
+    if mat_count == 0:
+        log.append(("WARNING", "BM3 file contains no materials"))
+
     for i, bm3_mat in enumerate(manifest.get("materials", [])):
+        mat_name = bm3_mat.get("name", f"material_{i}")
         is_overridden = mat_manifest is not None and bm3_mat.get("name") == "__GLTFLoader._default"
+
+        if mat_manifest is not None and not is_overridden:
+            log.append(("INFO", f"Material '{mat_name}' not overridden (name is not '__GLTFLoader._default')"))
+
+        if is_overridden:
+            overridden_count += 1
+            override_name = mat_manifest["materials"][0].get("name", "unnamed")
+            log.append(("INFO", f"Material '{mat_name}' overridden by BM3MAT material '{override_name}'"))
+
         use_mat = mat_manifest["materials"][0] if is_overridden else bm3_mat
         tex_src = mat_manifest if is_overridden else manifest
         tex_bin = mat_binary if is_overridden else binary
 
         albedo = use_mat.get("albedo", {})
         albedo_val = albedo.get("value", [0.8, 0.8, 0.8])
+        final_name = use_mat.get("name", f"material_{i}")
 
         gltf_mat = {
-            "name": use_mat.get("name", f"material_{i}"),
+            "name": final_name,
             "pbrMetallicRoughness": {
                 "baseColorFactor": [albedo_val[0], albedo_val[1], albedo_val[2], 1.0],
                 "metallicFactor": use_mat.get("metallic", {}).get("value", 0),
@@ -102,18 +129,21 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
             },
         }
 
+        src_label = "BM3MAT" if is_overridden else "BM3"
         for prop_name, gltf_key in [("albedo", "baseColorTexture"),
                                      ("roughness", "metallicRoughnessTexture")]:
             tex_id = use_mat.get(prop_name, {}).get("texture")
             if tex_id is not None:
-                idx = add_texture_from_source(tex_id, tex_src, tex_bin)
+                idx = add_texture_from_source(tex_id, tex_src, tex_bin,
+                                              label=f"Material '{final_name}' {prop_name} ({src_label})")
                 if idx is not None:
                     gltf_mat["pbrMetallicRoughness"][gltf_key] = {"index": idx}
 
         # Normal map
         tex_id = use_mat.get("normal", {}).get("texture")
         if tex_id is not None:
-            idx = add_texture_from_source(tex_id, tex_src, tex_bin)
+            idx = add_texture_from_source(tex_id, tex_src, tex_bin,
+                                          label=f"Material '{final_name}' normal ({src_label})")
             if idx is not None:
                 gltf_mat["normalTexture"] = {"index": idx}
 
@@ -121,11 +151,26 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
         if not is_overridden and "metallicRoughnessTexture" not in gltf_mat["pbrMetallicRoughness"]:
             tex_id = bm3_mat.get("roughness", {}).get("texture")
             if tex_id is not None:
-                idx = add_texture_from_source(tex_id, manifest, binary)
+                idx = add_texture_from_source(tex_id, manifest, binary,
+                                              label=f"Material '{final_name}' roughness fallback (BM3)")
                 if idx is not None:
                     gltf_mat["pbrMetallicRoughness"]["metallicRoughnessTexture"] = {"index": idx}
 
+        # Log texture summary for this material
+        has_any_tex = (
+            "baseColorTexture" in gltf_mat["pbrMetallicRoughness"]
+            or "metallicRoughnessTexture" in gltf_mat["pbrMetallicRoughness"]
+            or "normalTexture" in gltf_mat
+        )
+        if not has_any_tex:
+            log.append(("INFO", f"Material '{final_name}' has no textures (color-only)"))
+
         gltf["materials"].append(gltf_mat)
+
+    if mat_manifest is not None and overridden_count == 0:
+        log.append(("WARNING",
+                     "BM3MAT was loaded but no materials were overridden "
+                     "(none named '__GLTFLoader._default')"))
 
     # --- Geometries ---
     _MODE_MAP = {
@@ -302,6 +347,11 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None):
         })
         gltf["scenes"][0]["nodes"] = [wrapper_idx]
 
+    # --- Summary ---
+    log.append(("INFO", f"Result: {len(gltf['materials'])} material(s), "
+                f"{texture_count[0]} texture(s) embedded, "
+                f"{len(gltf['meshes'])} mesh(es)"))
+
     # Clean up empty arrays
     for key in ("textures", "images", "samplers"):
         if not gltf.get(key):
@@ -384,40 +434,52 @@ if _HAS_BPY:
                 self.report({"ERROR"}, "No files selected")
                 return {"CANCELLED"}
 
+            # Collects all messages for the popup and console
+            all_log = []  # list of (level, message)
+
             # Auto-detect material file in the same directory
             mat_manifest = None
             mat_binary = None
+            mat_file_name = None
             if self.auto_material:
                 src_dir = os.path.dirname(paths[0])
                 mat_files = _find_bm3mat_files(src_dir)
                 if mat_files:
                     mat_path = mat_files[0]
+                    mat_file_name = os.path.basename(mat_path)
                     try:
                         with open(mat_path, "rb") as f:
                             mat_manifest, mat_binary = _extract_bm3(f.read())
-                        self.report({"INFO"},
-                                    f"Auto-loaded material: {os.path.basename(mat_path)}")
+                        all_log.append(("INFO", f"Auto-loaded material: {mat_file_name}"))
                     except Exception as e:
-                        self.report({"WARNING"}, f"Could not load material: {e}")
+                        all_log.append(("WARNING", f"Could not load material {mat_file_name}: {e}"))
+                else:
+                    all_log.append(("INFO", f"No .bm3mat files found in {src_dir}"))
+            else:
+                all_log.append(("INFO", "Material auto-detect is disabled"))
 
             imported = 0
             for path in paths:
                 if not os.path.isfile(path):
                     continue
                 name = os.path.splitext(os.path.basename(path))[0]
-                self.report({"INFO"}, f"Converting: {name}")
+                all_log.append(("INFO", f"Converting: {name}"))
 
                 try:
                     with open(path, "rb") as f:
                         manifest, binary = _extract_bm3(f.read())
                 except Exception as e:
-                    self.report({"WARNING"}, f"Could not read {name}: {e}")
+                    all_log.append(("WARNING", f"Could not read {name}: {e}"))
                     continue
 
                 try:
-                    glb_data = _bm3_to_glb(manifest, binary, mat_manifest, mat_binary)
+                    convert_log = []
+                    glb_data = _bm3_to_glb(manifest, binary, mat_manifest, mat_binary,
+                                           log=convert_log)
+                    for level, msg in convert_log:
+                        all_log.append((level, f"[{name}] {msg}"))
                 except Exception as e:
-                    self.report({"WARNING"}, f"Could not convert {name}: {e}")
+                    all_log.append(("WARNING", f"Could not convert {name}: {e}"))
                     continue
 
                 tmp_path = os.path.join(tempfile.gettempdir(), f"_bm3_{name}.glb")
@@ -435,15 +497,72 @@ if _HAS_BPY:
 
                     imported += 1
                 except Exception as e:
-                    self.report({"WARNING"}, f"Could not import {name}: {e}")
+                    all_log.append(("WARNING", f"Could not import {name}: {e}"))
                 finally:
                     try:
                         os.remove(tmp_path)
                     except OSError:
                         pass
 
-            self.report({"INFO"}, f"Imported {imported}/{len(paths)} BM3 file(s)")
+            all_log.append(("INFO", f"Imported {imported}/{len(paths)} BM3 file(s)"))
+
+            # Print full log to Blender console
+            print("\n" + "=" * 60)
+            print("BM3 Import Report")
+            print("=" * 60)
+            for level, msg in all_log:
+                print(f"  [{level}] {msg}")
+            print("=" * 60 + "\n")
+
+            # Forward to Blender's report system
+            for level, msg in all_log:
+                self.report({level}, msg)
+
+            # Show popup summary
+            has_warnings = any(lvl == "WARNING" for lvl, _ in all_log)
+            _show_import_report(context, all_log, imported, len(paths),
+                                mat_file_name, has_warnings)
+
             return {"FINISHED"} if imported > 0 else {"CANCELLED"}
+
+    # -------------------------------------------------------------------
+    # Import report popup
+    # -------------------------------------------------------------------
+
+    _import_report_lines = []
+
+    def _show_import_report(context, all_log, imported, total, mat_file, has_warnings):
+        lines = []
+        lines.append(f"Files: {imported}/{total} imported successfully")
+        if mat_file:
+            lines.append(f"Material file: {mat_file}")
+        else:
+            lines.append("Material file: none found")
+        lines.append("")
+
+        for level, msg in all_log:
+            if level == "WARNING":
+                lines.append(f"WARNING: {msg}")
+            elif "Result:" in msg or "overridden" in msg or "not overridden" in msg:
+                lines.append(msg)
+            elif "color-only" in msg or "no textures" in msg or "texture" in msg.lower():
+                lines.append(msg)
+
+        _import_report_lines.clear()
+        _import_report_lines.extend(lines)
+
+        title = "BM3 Import Report"
+        if has_warnings:
+            title += " (with warnings)"
+
+        def draw_report(self, context):
+            for line in _import_report_lines:
+                row = self.layout.row()
+                if line.startswith("WARNING:"):
+                    row.alert = True
+                row.label(text=line)
+
+        context.window_manager.popup_menu(draw_report, title=title, icon="INFO")
 
     # -------------------------------------------------------------------
     # Registration

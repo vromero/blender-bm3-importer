@@ -161,3 +161,48 @@ def test_single_sided_by_default(triangle_bm3):
     gltf, _ = parse_glb(glb)
 
     assert "doubleSided" not in gltf["materials"][0]
+
+
+# ---------------------------------------------------------------------------
+# Converter logging / feedback
+# ---------------------------------------------------------------------------
+
+def test_log_summary_no_textures(triangle_bm3):
+    data, _, _ = triangle_bm3
+    manifest, binary = _extract_bm3(data)
+    log = []
+    _bm3_to_glb(manifest, binary, log=log)
+
+    messages = [msg for _, msg in log]
+    # Should report 0 textures
+    assert any("0 texture(s)" in m for m in messages)
+    # Should report color-only material
+    assert any("color-only" in m for m in messages)
+
+
+def test_log_bm3mat_override(default_material_bm3, bm3mat_data):
+    manifest, binary = _extract_bm3(default_material_bm3)
+    mat_manifest, mat_binary = _extract_bm3(bm3mat_data)
+
+    log = []
+    _bm3_to_glb(manifest, binary, mat_manifest, mat_binary, log=log)
+
+    messages = [msg for _, msg in log]
+    assert any("overridden by BM3MAT" in m for m in messages)
+
+
+def test_log_bm3mat_no_override(triangle_bm3, bm3mat_data):
+    """BM3MAT loaded but material name doesn't match __GLTFLoader._default."""
+    data, _, _ = triangle_bm3
+    manifest, binary = _extract_bm3(data)
+    mat_manifest, mat_binary = _extract_bm3(bm3mat_data)
+
+    log = []
+    _bm3_to_glb(manifest, binary, mat_manifest, mat_binary, log=log)
+
+    levels_and_msgs = [(lvl, msg) for lvl, msg in log]
+    # Should warn that BM3MAT was loaded but nothing overridden
+    assert any(
+        lvl == "WARNING" and "no materials were overridden" in msg
+        for lvl, msg in levels_and_msgs
+    )
