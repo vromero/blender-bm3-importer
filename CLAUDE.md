@@ -29,7 +29,7 @@ The entire add-on lives in `bm3_importer/__init__.py` (~410 lines). Key flow:
 ### BM3 Format Details
 
 - BM3 files are ZIPs containing `manifest.json` + `binary.bin`
-- Materials named `__GLTFLoader._default` in the geometry BM3 get replaced by the first material from the BM3MAT file
+- Materials with default/placeholder names (`__GLTFLoader._default`, `default_mat`) in the geometry BM3 get replaced by the first material from the BM3MAT file
 - Per-geometry vertex layouts; common layout is POSITION(float3) + NORMAL(float3) + TEXCOORD_0(float2) = 32 bytes/vertex
 - BM3 uses Z-up millimeters; a wrapper root node with scale `[0.001, 0.001, 0.001]` converts to glTF meters
 - DSPBR material properties (albedo, metallic, roughness, normal) map to glTF PBR

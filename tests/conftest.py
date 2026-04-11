@@ -193,8 +193,8 @@ def _make_bm3mat():
     return _pack_bm3(manifest, b"")
 
 
-def _make_default_material_bm3():
-    """Build a BM3 with __GLTFLoader._default material (eligible for override)."""
+def _make_default_material_bm3(mat_name="__GLTFLoader._default"):
+    """Build a BM3 with a default/placeholder material (eligible for override)."""
     verts = b""
     for pos, uv in [((0, 0, 0), (0, 0)), ((1, 0, 0), (1, 0)), ((0, 1, 0), (0, 1))]:
         verts += struct.pack("<3f", *pos)
@@ -208,7 +208,7 @@ def _make_default_material_bm3():
         "nodes": [{"type": "Mesh3D", "geometries": [0], "material": 0, "children": []}],
         "materials": [
             {
-                "name": "__GLTFLoader._default",
+                "name": mat_name,
                 "albedo": {"value": [0.8, 0.8, 0.8]},
                 "metallic": {"value": 0},
                 "roughness": {"value": 1},
@@ -288,3 +288,8 @@ def bm3mat_data():
 @pytest.fixture
 def default_material_bm3():
     return _make_default_material_bm3()
+
+
+@pytest.fixture
+def default_mat_bm3():
+    return _make_default_material_bm3(mat_name="default_mat")

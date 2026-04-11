@@ -95,6 +95,7 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None, log=None):
         return tex_gltf_idx
 
     # --- Materials ---
+    _DEFAULT_MAT_NAMES = {"__GLTFLoader._default", "default_mat"}
     overridden_count = 0
     mat_count = len(manifest.get("materials", []))
     if mat_count == 0:
@@ -102,10 +103,10 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None, log=None):
 
     for i, bm3_mat in enumerate(manifest.get("materials", [])):
         mat_name = bm3_mat.get("name", f"material_{i}")
-        is_overridden = mat_manifest is not None and bm3_mat.get("name") == "__GLTFLoader._default"
+        is_overridden = mat_manifest is not None and mat_name in _DEFAULT_MAT_NAMES
 
         if mat_manifest is not None and not is_overridden:
-            log.append(("INFO", f"Material '{mat_name}' not overridden (name is not '__GLTFLoader._default')"))
+            log.append(("INFO", f"Material '{mat_name}' not overridden (not a default material name)"))
 
         if is_overridden:
             overridden_count += 1
@@ -170,7 +171,7 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None, log=None):
     if mat_manifest is not None and overridden_count == 0:
         log.append(("WARNING",
                      "BM3MAT was loaded but no materials were overridden "
-                     "(none named '__GLTFLoader._default')"))
+                     "(no default material names found)"))
 
     # --- Geometries ---
     _MODE_MAP = {

@@ -191,6 +191,20 @@ def test_log_bm3mat_override(default_material_bm3, bm3mat_data):
     assert any("overridden by BM3MAT" in m for m in messages)
 
 
+def test_bm3mat_override_default_mat(default_mat_bm3, bm3mat_data):
+    """default_mat is also a placeholder name that should trigger override."""
+    manifest, binary = _extract_bm3(default_mat_bm3)
+    mat_manifest, mat_binary = _extract_bm3(bm3mat_data)
+
+    glb = _bm3_to_glb(manifest, binary, mat_manifest, mat_binary)
+    gltf, _ = parse_glb(glb)
+
+    mat = gltf["materials"][0]
+    assert mat["name"] == "override_material"
+    pbr = mat["pbrMetallicRoughness"]
+    assert pbr["baseColorFactor"][1] == pytest.approx(0.9, abs=0.01)
+
+
 def test_log_bm3mat_no_override(triangle_bm3, bm3mat_data):
     """BM3MAT loaded but material name doesn't match __GLTFLoader._default."""
     data, _, _ = triangle_bm3
