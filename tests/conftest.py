@@ -193,8 +193,8 @@ def _make_bm3mat():
     return _pack_bm3(manifest, b"")
 
 
-def _make_default_material_bm3(mat_name="__GLTFLoader._default"):
-    """Build a BM3 with a default/placeholder material (eligible for override)."""
+def _make_default_material_bm3():
+    """Build a BM3 with __GLTFLoader._default material (eligible for override)."""
     verts = b""
     for pos, uv in [((0, 0, 0), (0, 0)), ((1, 0, 0), (1, 0)), ((0, 1, 0), (0, 1))]:
         verts += struct.pack("<3f", *pos)
@@ -208,7 +208,51 @@ def _make_default_material_bm3(mat_name="__GLTFLoader._default"):
         "nodes": [{"type": "Mesh3D", "geometries": [0], "material": 0, "children": []}],
         "materials": [
             {
-                "name": mat_name,
+                "name": "__GLTFLoader._default",
+                "albedo": {"value": [0.8, 0.8, 0.8]},
+                "metallic": {"value": 0},
+                "roughness": {"value": 1},
+            }
+        ],
+        "vertexLayouts": [[
+            [
+                {"attribute": "POSITION", "format": "FLOAT", "dimension": 3},
+                {"attribute": "NORMAL", "format": "FLOAT", "dimension": 3},
+                {"attribute": "TEX_COORD_0", "format": "FLOAT", "dimension": 2},
+            ]
+        ]],
+        "geometries": [{
+            "vertexLayout": 0,
+            "vertexBuffers": [0],
+            "indexBuffer": 1,
+            "drawingGroups": [{"start": 0, "count": 3, "mode": "TRIANGLES"}],
+        }],
+        "buffers": [
+            {"binary": 0, "byteOffset": 0, "byteLength": len(verts)},
+            {"binary": 0, "byteOffset": len(verts), "byteLength": len(indices),
+             "format": "UNSIGNED_SHORT"},
+        ],
+    }
+
+    return _pack_bm3(manifest, binary)
+
+
+def _make_default_mat_bm3():
+    """Build a BM3 with default_mat material (eligible for override)."""
+    verts = b""
+    for pos, uv in [((0, 0, 0), (0, 0)), ((1, 0, 0), (1, 0)), ((0, 1, 0), (0, 1))]:
+        verts += struct.pack("<3f", *pos)
+        verts += struct.pack("<3f", 0, 0, 1)
+        verts += struct.pack("<2f", *uv)
+    indices = struct.pack("<3H", 0, 1, 2)
+    binary = verts + indices
+
+    manifest = {
+        "root": 0,
+        "nodes": [{"type": "Mesh3D", "geometries": [0], "material": 0, "children": []}],
+        "materials": [
+            {
+                "name": "default_mat",
                 "albedo": {"value": [0.8, 0.8, 0.8]},
                 "metallic": {"value": 0},
                 "roughness": {"value": 1},
@@ -292,4 +336,4 @@ def default_material_bm3():
 
 @pytest.fixture
 def default_mat_bm3():
-    return _make_default_material_bm3(mat_name="default_mat")
+    return _make_default_mat_bm3()

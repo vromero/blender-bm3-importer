@@ -192,7 +192,6 @@ def test_log_bm3mat_override(default_material_bm3, bm3mat_data):
 
 
 def test_bm3mat_override_default_mat(default_mat_bm3, bm3mat_data):
-    """default_mat is also a placeholder name that should trigger override."""
     manifest, binary = _extract_bm3(default_mat_bm3)
     mat_manifest, mat_binary = _extract_bm3(bm3mat_data)
 
@@ -203,6 +202,8 @@ def test_bm3mat_override_default_mat(default_mat_bm3, bm3mat_data):
     assert mat["name"] == "override_material"
     pbr = mat["pbrMetallicRoughness"]
     assert pbr["baseColorFactor"][1] == pytest.approx(0.9, abs=0.01)
+    assert pbr["metallicFactor"] == pytest.approx(0.5)
+    assert pbr["roughnessFactor"] == pytest.approx(0.3)
 
 
 def test_log_bm3mat_no_override(triangle_bm3, bm3mat_data):
