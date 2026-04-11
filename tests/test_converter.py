@@ -44,6 +44,28 @@ def test_single_triangle(triangle_bm3):
     assert idx_acc["count"] == ic
 
 
+def test_wrapper_node_zup_to_yup(triangle_bm3):
+    data, _, _ = triangle_bm3
+    manifest, binary = _extract_bm3(data)
+    glb = _bm3_to_glb(manifest, binary)
+    gltf, _ = parse_glb(glb)
+
+    # The wrapper root node should have combined scale + Z-up to Y-up rotation
+    root_idx = gltf["scenes"][0]["nodes"][0]
+    root = gltf["nodes"][root_idx]
+    m = root["matrix"]
+    assert "scale" not in root
+    # Column-major: scale 0.001 + Z-up→Y-up (x'=x, y'=z, z'=-y)
+    expected = [
+        0.001, 0, 0, 0,
+        0, 0, -0.001, 0,
+        0, 0.001, 0, 0,
+        0, 0, 0, 1,
+    ]
+    for i in range(16):
+        assert m[i] == pytest.approx(expected[i])
+
+
 # ---------------------------------------------------------------------------
 # Index bounds validation
 # ---------------------------------------------------------------------------

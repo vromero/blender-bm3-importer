@@ -338,13 +338,19 @@ def _bm3_to_glb(manifest, binary, mat_manifest=None, mat_binary=None, log=None):
 
         gltf["nodes"].append(gltf_node)
 
-    # Add a wrapper root node that converts mm to meters (scale 0.001).
-    # BM3 uses millimeters; Blender / glTF expect meters.
+    # Add a wrapper root node that converts mm → meters AND Z-up → Y-up.
+    # BM3 uses Z-up millimeters; glTF uses Y-up meters.
+    # Combined matrix (column-major): scale 0.001 + rotate (x'=x, y'=z, z'=-y)
     if "root" in manifest:
         wrapper_idx = len(gltf["nodes"])
         gltf["nodes"].append({
             "name": "root",
-            "scale": [0.001, 0.001, 0.001],
+            "matrix": [
+                0.001, 0, 0, 0,
+                0, 0, -0.001, 0,
+                0, 0.001, 0, 0,
+                0, 0, 0, 1,
+            ],
             "children": [manifest["root"]],
         })
         gltf["scenes"][0]["nodes"] = [wrapper_idx]
